@@ -112,6 +112,27 @@ async function startServer() {
     res.json(mentores);
   });
 
+  // Mentor: Get single mentor details
+  app.get("/api/mentores/:id", (req, res) => {
+    const { id } = req.params;
+    const mentor: any = db.prepare(`
+      SELECT u.id, u.nombre_completo, u.carrera, u.biografia, u.correo
+      FROM usuarios u
+      WHERE u.id = ?
+    `).get(id);
+
+    if (!mentor) return res.status(404).json({ error: "Mentor no encontrado" });
+
+    const materias = db.prepare(`
+      SELECT m.nombre as materia_nombre, mm.metodo_contacto, mm.valor_contacto
+      FROM mentoria_materias mm
+      JOIN materias m ON mm.materia_id = m.id
+      WHERE mm.mentor_id = ?
+    `).all(id);
+
+    res.json({ ...mentor, materias });
+  });
+
   // Subjects: List
   app.get("/api/materias", (req, res) => {
     const materias = db.prepare("SELECT * FROM materias").all();

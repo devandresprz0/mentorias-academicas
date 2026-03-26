@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from "react-router-dom";
-import { Search, User, LogIn, LogOut, BookOpen, MessageCircle, Mail, Settings, Plus, Trash2, Shield } from "lucide-react";
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useParams } from "react-router-dom";
+import { Search, User, LogIn, LogOut, BookOpen, MessageCircle, Mail, Settings, Plus, Trash2, Shield, ArrowLeft, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -53,7 +53,7 @@ const MentorCard = ({ mentor }: { mentor: any; key?: any }) => (
     initial={{ opacity: 0, scale: 0.9 }}
     animate={{ opacity: 1, scale: 1 }}
     exit={{ opacity: 0, scale: 0.9 }}
-    className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
+    className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow flex flex-col"
   >
     <div className="flex items-start justify-between mb-4">
       <div>
@@ -64,27 +64,35 @@ const MentorCard = ({ mentor }: { mentor: any; key?: any }) => (
         {mentor.materia_nombre}
       </div>
     </div>
-    <p className="text-gray-600 text-sm mb-6 line-clamp-3">{mentor.biografia || "Sin biografía disponible."}</p>
-    <div className="flex gap-2">
-      {mentor.metodo_contacto === 'whatsapp' ? (
-        <a 
-          href={mentor.valor_contacto} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="flex-1 bg-green-500 text-white py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-600 transition-colors"
-        >
-          <MessageCircle className="w-4 h-4" />
-          WhatsApp
-        </a>
-      ) : (
-        <a 
-          href={`mailto:${mentor.valor_contacto}`}
-          className="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
-        >
-          <Mail className="w-4 h-4" />
-          Email
-        </a>
-      )}
+    <p className="text-gray-600 text-sm mb-6 line-clamp-3 flex-grow">{mentor.biografia || "Sin biografía disponible."}</p>
+    <div className="flex flex-col gap-2">
+      <Link 
+        to={`/mentor/${mentor.id}`}
+        className="w-full bg-gray-50 text-gray-700 py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-100 transition-colors border border-gray-100"
+      >
+        Ver perfil completo
+      </Link>
+      <div className="flex gap-2">
+        {mentor.metodo_contacto === 'whatsapp' ? (
+          <a 
+            href={mentor.valor_contacto} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex-1 bg-green-500 text-white py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-600 transition-colors"
+          >
+            <MessageCircle className="w-4 h-4" />
+            WhatsApp
+          </a>
+        ) : (
+          <a 
+            href={`mailto:${mentor.valor_contacto}`}
+            className="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+          >
+            <Mail className="w-4 h-4" />
+            Email
+          </a>
+        )}
+      </div>
     </div>
   </motion.div>
 );
@@ -408,6 +416,121 @@ const Profile = ({ user, token }: { user: any; token: string }) => {
   );
 };
 
+const MentorProfile = () => {
+  const { id } = useParams();
+  const [mentor, setMentor] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    fetch(`/api/mentores/${id}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          navigate("/");
+        } else {
+          setMentor(data);
+        }
+        setLoading(false);
+      });
+  }, [id, navigate]);
+
+  if (loading) return (
+    <div className="flex justify-center py-20">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+    </div>
+  );
+
+  if (!mentor) return null;
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-12">
+      <button 
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-2 text-gray-600 hover:text-blue-600 mb-8 font-medium transition-colors"
+      >
+        <ArrowLeft className="w-5 h-5" />
+        Volver
+      </button>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
+            <div className="flex items-center gap-6 mb-8">
+              <div className="bg-blue-100 p-6 rounded-3xl">
+                <User className="w-12 h-12 text-blue-600" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-extrabold text-gray-900 mb-1">{mentor.nombre_completo}</h1>
+                <p className="text-blue-600 font-bold text-lg">{mentor.carrera}</p>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">Sobre mí</h3>
+                <p className="text-gray-700 leading-relaxed text-lg">
+                  {mentor.biografia || "Este mentor aún no ha añadido una biografía."}
+                </p>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Materias que imparto</h3>
+                <div className="flex flex-wrap gap-3">
+                  {mentor.materias.map((m: any, idx: number) => (
+                    <div key={idx} className="bg-gray-50 border border-gray-100 px-4 py-2 rounded-xl text-gray-700 font-medium">
+                      {m.materia_nombre}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 sticky top-24">
+            <h3 className="text-xl font-bold text-gray-900 mb-6">Contactar ahora</h3>
+            <div className="space-y-4">
+              {mentor.materias.map((m: any, idx: number) => (
+                <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                  <p className="text-xs font-bold text-gray-400 uppercase mb-2">{m.materia_nombre}</p>
+                  {m.metodo_contacto === 'whatsapp' ? (
+                    <a 
+                      href={m.valor_contacto} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="w-full bg-green-500 text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-600 transition-colors"
+                    >
+                      <MessageCircle className="w-5 h-5" />
+                      WhatsApp
+                    </a>
+                  ) : (
+                    <a 
+                      href={`mailto:${m.valor_contacto}`}
+                      className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+                    >
+                      <Mail className="w-5 h-5" />
+                      Enviar Email
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-8 pt-8 border-t border-gray-100">
+              <div className="flex items-center gap-3 text-gray-500 text-sm">
+                <Mail className="w-4 h-4" />
+                <span>{mentor.correo}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- MAIN APP ---
 
 export default function App() {
@@ -447,6 +570,7 @@ export default function App() {
             <Route path="/login" element={<Login onLogin={handleLogin} />} />
             <Route path="/registro" element={<Register />} />
             <Route path="/perfil" element={user ? <Profile user={user} token={token} /> : <Login onLogin={handleLogin} />} />
+            <Route path="/mentor/:id" element={<MentorProfile />} />
             <Route path="/admin" element={<div className="p-20 text-center">Panel de Administración (Próximamente)</div>} />
           </Routes>
         </main>
