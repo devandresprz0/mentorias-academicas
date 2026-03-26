@@ -16,86 +16,20 @@ async function startServer() {
 
   // --- API ROUTES ---
 
-  // Admin: Get all users
-  app.get("/api/admin/usuarios", (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
-    try {
-      const token = authHeader.split(" ")[1];
-      const decoded: any = jwt.verify(token, JWT_SECRET);
-      if (decoded.rol !== 'admin') return res.status(403).json({ error: "Prohibido" });
-      
-      const users = db.prepare("SELECT id, nombre_completo, correo, rol, carrera FROM usuarios").all();
-      res.json(users);
-    } catch (error) {
-      res.status(401).json({ error: "Token inválido" });
-    }
-  });
-
-  // Admin: Delete user
-  app.delete("/api/admin/usuarios/:id", (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
-    try {
-      const token = authHeader.split(" ")[1];
-      const decoded: any = jwt.verify(token, JWT_SECRET);
-      if (decoded.rol !== 'admin') return res.status(403).json({ error: "Prohibido" });
-      
-      db.prepare("DELETE FROM usuarios WHERE id = ?").run(req.params.id);
-      res.json({ success: true });
-    } catch (error) {
-      res.status(401).json({ error: "Token inválido" });
-    }
-  });
-
-  // Auth: Register
-  app.post("/api/auth/register", async (req, res) => {
-    try {
-      const schema = z.object({
-        nombre: z.string().min(3),
-        correo: z.string().email().refine(e => e.endsWith("@universidad.edu"), "Solo correos @universidad.edu"),
-        password: z.string().min(6),
-        carrera: z.string()
-      });
-      const data = schema.parse(req.body);
-      
-      const hashedPassword = await bcrypt.hash(data.password, 10);
-      
-      const stmt = db.prepare("INSERT INTO usuarios (nombre_completo, correo, password, carrera) VALUES (?, ?, ?, ?)");
-      const info = stmt.run(data.nombre, data.correo, hashedPassword, data.carrera);
-      
-      res.status(201).json({ id: info.lastInsertRowid });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message || "Error al registrar usuario" });
-    }
-  });
-
-  // Auth: Login
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { correo, password } = req.body;
-      const user: any = db.prepare("SELECT * FROM usuarios WHERE correo = ?").get(correo);
-      
-      if (!user || !(await bcrypt.compare(password, user.password))) {
-        return res.status(401).json({ error: "Credenciales inválidas" });
-      }
-      
-      const token = jwt.sign({ id: user.id, rol: user.rol }, JWT_SECRET, { expiresIn: "1d" });
-      res.json({ token, user: { id: user.id, nombre: user.nombre_completo, rol: user.rol } });
-    } catch (error) {
-      res.status(500).json({ error: "Error en el servidor" });
-    }
-  });
-
-  // Mentors: List with filters
+  // Mentors: List with advanced filters
   app.get("/api/mentores", (req, res) => {
-    const { materia, carrera } = req.query;
+    const { materia, carrera, q } = req.query;
     let query = `
-      SELECT u.id, u.nombre_completo, u.carrera, u.biografia, m.nombre as materia_nombre, mm.metodo_contacto, mm.valor_contacto
+      SELECT 
+        u.id, u.nombre, u.bio, c.nombre as carrera_nombre,
+        GROUP_CONCAT(m.nombre) as materias,
+        ct.tipo as contacto_tipo, ct.valor as contacto_valor
       FROM usuarios u
-      JOIN mentoria_materias mm ON u.id = mm.mentor_id
+      JOIN carreras c ON u.carrera_id = c.id
+      JOIN mentores_materias mm ON u.id = mm.usuario_id
       JOIN materias m ON mm.materia_id = m.id
-      WHERE 1=1
+      LEFT JOIN contacto ct ON u.id = ct.usuario_id
+      WHERE u.rol = 'mentor'
     `;
     const params: any[] = [];
     
@@ -104,9 +38,15 @@ async function startServer() {
       params.push(`%${materia}%`);
     }
     if (carrera) {
-      query += " AND u.carrera LIKE ?";
+      query += " AND c.nombre LIKE ?";
       params.push(`%${carrera}%`);
     }
+    if (q) {
+      query += " AND (u.nombre LIKE ? OR u.bio LIKE ?)";
+      params.push(`%${q}%`, `%${q}%`);
+    }
+    
+    query += " GROUP BY u.id";
     
     const mentores = db.prepare(query).all(...params);
     res.json(mentores);
@@ -116,27 +56,121 @@ async function startServer() {
   app.get("/api/mentores/:id", (req, res) => {
     const { id } = req.params;
     const mentor: any = db.prepare(`
-      SELECT u.id, u.nombre_completo, u.carrera, u.biografia, u.correo
+      SELECT u.id, u.nombre, u.bio, u.email, c.nombre as carrera_nombre
       FROM usuarios u
-      WHERE u.id = ?
+      JOIN carreras c ON u.carrera_id = c.id
+      WHERE u.id = ? AND u.rol = 'mentor'
     `).get(id);
 
     if (!mentor) return res.status(404).json({ error: "Mentor no encontrado" });
 
     const materias = db.prepare(`
-      SELECT m.nombre as materia_nombre, mm.metodo_contacto, mm.valor_contacto
-      FROM mentoria_materias mm
+      SELECT m.nombre, mm.experiencia
+      FROM mentores_materias mm
       JOIN materias m ON mm.materia_id = m.id
-      WHERE mm.mentor_id = ?
+      WHERE mm.usuario_id = ?
     `).all(id);
 
-    res.json({ ...mentor, materias });
+    const contactos = db.prepare(`
+      SELECT tipo, valor FROM contacto WHERE usuario_id = ?
+    `).all(id);
+
+    res.json({ ...mentor, materias, contactos });
   });
 
-  // Subjects: List
-  app.get("/api/materias", (req, res) => {
+  // Catalogs
+  app.get("/api/catalogos", (req, res) => {
     const materias = db.prepare("SELECT * FROM materias").all();
-    res.json(materias);
+    const carreras = db.prepare("SELECT * FROM carreras").all();
+    res.json({ materias, carreras });
+  });
+
+  // Auth: Register
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { nombre, email, password, rol, carrera_id } = req.body;
+      
+      if (!email.endsWith("@universidad.edu")) {
+        return res.status(400).json({ error: "Solo correos institucionales @universidad.edu" });
+      }
+      
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const stmt = db.prepare("INSERT INTO usuarios (nombre, email, password, rol, carrera_id) VALUES (?, ?, ?, ?, ?)");
+      const info = stmt.run(nombre, email, hashedPassword, rol, carrera_id);
+      
+      res.status(201).json({ id: info.lastInsertRowid });
+    } catch (error: any) {
+      res.status(400).json({ error: "El correo ya está registrado o datos inválidos" });
+    }
+  });
+
+  // Auth: Login
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { correo, password } = req.body;
+      const user: any = db.prepare("SELECT * FROM usuarios WHERE email = ?").get(correo);
+      
+      if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ error: "Credenciales inválidas" });
+      }
+      
+      const token = jwt.sign({ id: user.id, rol: user.rol }, JWT_SECRET, { expiresIn: "1d" });
+      res.json({ token, user: { id: user.id, nombre: user.nombre, rol: user.rol } });
+    } catch (error) {
+      res.status(500).json({ error: "Error en el servidor" });
+    }
+  });
+
+  // Profile: Get current user data
+  app.get("/api/perfil", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
+    
+    try {
+      const token = authHeader.split(" ")[1];
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      
+      const user: any = db.prepare(`
+        SELECT u.id, u.nombre, u.email, u.bio, u.rol, u.carrera_id, c.nombre as carrera_nombre
+        FROM usuarios u
+        LEFT JOIN carreras c ON u.carrera_id = c.id
+        WHERE u.id = ?
+      `).get(decoded.id);
+
+      if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+
+      const materias = db.prepare(`
+        SELECT mm.materia_id, m.nombre, mm.experiencia
+        FROM mentores_materias mm
+        JOIN materias m ON mm.materia_id = m.id
+        WHERE mm.usuario_id = ?
+      `).all(decoded.id);
+
+      const contactos = db.prepare(`
+        SELECT id, tipo, valor FROM contacto WHERE usuario_id = ?
+      `).all(decoded.id);
+
+      res.json({ ...user, materias, contactos });
+    } catch (error) {
+      res.status(401).json({ error: "Token inválido" });
+    }
+  });
+
+  // Profile: Update
+  app.post("/api/perfil/actualizar", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
+    
+    try {
+      const token = authHeader.split(" ")[1];
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      const { bio, carrera_id } = req.body;
+      
+      db.prepare("UPDATE usuarios SET bio = ?, carrera_id = ? WHERE id = ?").run(bio, carrera_id, decoded.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(401).json({ error: "Token inválido" });
+    }
   });
 
   // Profile: Add Mentorship
@@ -147,18 +181,69 @@ async function startServer() {
     try {
       const token = authHeader.split(" ")[1];
       const decoded: any = jwt.verify(token, JWT_SECRET);
+      const { materia_id, experiencia } = req.body;
       
-      const { materia_id, metodo, valor } = req.body;
-      
-      // Basic WhatsApp validation if needed
-      if (metodo === 'whatsapp' && !valor.startsWith('https://wa.me/')) {
-        return res.status(400).json({ error: "Enlace de WhatsApp inválido. Debe empezar con https://wa.me/" });
-      }
-
-      const stmt = db.prepare("INSERT INTO mentoria_materias (mentor_id, materia_id, metodo_contacto, valor_contacto) VALUES (?, ?, ?, ?)");
-      stmt.run(decoded.id, materia_id, metodo, valor);
+      db.prepare("INSERT OR REPLACE INTO mentores_materias (usuario_id, materia_id, experiencia) VALUES (?, ?, ?)")
+        .run(decoded.id, materia_id, experiencia);
       
       res.status(201).json({ success: true });
+    } catch (error) {
+      res.status(401).json({ error: "Token inválido" });
+    }
+  });
+
+  // Profile: Add Contact
+  app.post("/api/perfil/contacto", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
+    
+    try {
+      const token = authHeader.split(" ")[1];
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      const { tipo, valor } = req.body;
+      
+      db.prepare("INSERT OR REPLACE INTO contacto (usuario_id, tipo, valor) VALUES (?, ?, ?)")
+        .run(decoded.id, tipo, valor);
+      
+      res.status(201).json({ success: true });
+    } catch (error) {
+      res.status(401).json({ error: "Token inválido" });
+    }
+  });
+
+  // Profile: Delete Mentorship
+  app.delete("/api/perfil/mentoria/:materiaId", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
+    
+    try {
+      const token = authHeader.split(" ")[1];
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      const { materiaId } = req.params;
+      
+      db.prepare("DELETE FROM mentores_materias WHERE usuario_id = ? AND materia_id = ?")
+        .run(decoded.id, materiaId);
+      
+      res.json({ success: true });
+    } catch (error) {
+      res.status(401).json({ error: "Token inválido" });
+    }
+  });
+
+  // Profile: Delete Contact
+  app.delete("/api/perfil/contacto/:id", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "No autorizado" });
+    
+    try {
+      const token = authHeader.split(" ")[1];
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      const { id } = req.params;
+      
+      db.prepare("DELETE FROM contacto WHERE id = ? AND usuario_id = ?")
+        .run(id, decoded.id);
+      
+      res.json({ success: true });
     } catch (error) {
       res.status(401).json({ error: "Token inválido" });
     }
